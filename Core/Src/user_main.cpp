@@ -1,0 +1,103 @@
+#include "user_main.hpp"
+#include "usbd_cdc_if.h"
+#include "string.h"
+#include "stdio.h"
+#include "main.h"
+
+uint8_t init_cmd[11][8] = {{0x01, 0x06, 0x02, 0xC1, 0x00, 0x02, 0x58, 0x4F}, //原點復歸方式
+					{0x01, 0x06 ,0x02 ,0xCB ,0x00 ,0x00 ,0xF9 ,0x8C}, //原點復歸方向
+					{0x01 ,0x06 ,0x02 ,0xC3 ,0x27 ,0x10 ,0x62 ,0x72},//10000Hz
+					{0x01 ,0x06 ,0x00 ,0x7D ,0x00 ,0x10 ,0x18 ,0x1E},//停1分鐘
+					{0x01 ,0x06 ,0x00 ,0x7D ,0x00 ,0x00 ,0x19 ,0xD2},
+					{0x01 ,0x06 ,0x01 ,0x8B ,0x00 ,0x01 ,0x39 ,0xDC},
+					{0x01 ,0x06 ,0x01 ,0x8B ,0x00 ,0x00 ,0xF8 ,0x1C},
+					{0x01 ,0x06 ,0x05 ,0x01 ,0x00 ,0x01 ,0x19 ,0x06},//運轉方式(絕對式)
+					{0x01 ,0x06 ,0x04 ,0x81 ,0x13 ,0x88 ,0xD5 ,0x84},//速度
+					{0x01 ,0x06 ,0x06 ,0x01 ,0x05 ,0xDC ,0xDA ,0x4B},//加速
+					{0x01 ,0x06 ,0x06 ,0x81 ,0x05 ,0xDC ,0xDB ,0xA3} //減速
+};
+uint8_t position_cmd[5][8] = {{0x01 ,0x06 ,0x04 ,0x01 ,0x00 ,0x00 ,0xD9 ,0x3A}, //0 step
+						{0x01 ,0x06 ,0x04 ,0x01 ,0x27 ,0x10 ,0xC3 ,0x06},	//10000 step
+						{0x01 ,0x06 ,0x04 ,0x01 ,0x4E ,0x20 ,0xED ,0x42},	//20000 step
+						{0x01 ,0x06 ,0x04 ,0x01 ,0x75 ,0x30 ,0xFF ,0xBE},	//30000 step
+						{0x01 ,0x06 ,0x04 ,0x01 ,0x9C ,0x40 ,0xB1 ,0xCA}	//40000 step
+};
+uint8_t move_cmd[2][8] = {{0x01 ,0x06 ,0x00 ,0x7D ,0x00 ,0x08 ,0x18 ,0x14},
+					{0x01 ,0x06 ,0x00 ,0x7D ,0x00 ,0x00 ,0x19 ,0xD2}
+};
+uint8_t output_cmd[8] = {0x01 ,0x06 ,0x00 ,0x7D ,0x00 ,0x08 ,0x18 ,0x14};
+
+uint8_t read_speed_cmd[8] = {0x01 ,0x03 ,0x00 ,0xCF ,0x00 ,0x01 ,0xB4 ,0x35};
+
+uint8_t read_data[8] = {};
+
+int16_t hour=0, min=0, sec=0, variation_flag=0, ms_100;
+volatile bool tim7_EN = false; // volatile
+
+void user_init(void){
+	HAL_StatusTypeDef ret = HAL_OK;
+	uint8_t *package;
+
+	HAL_Delay(2000);
+	package = &init_cmd[0][0];
+	for(int i=0;i<11;i++){
+		package = &init_cmd[0][0];
+		ret = RS485_transmit(package+8*i, 8, 100);
+
+		HAL_Delay(20);
+		if(i==3){
+			do{
+				package = &read_speed_cmd[0];
+				ret = RS485_transmit(package, 8, 100);
+				ret = RS485_receive(read_data, 8, 100);
+
+				HAL_Delay(20);
+			}while(read_data[4] != 0 || read_data[3] != 0);
+
+		}
+	}
+}
+
+void user_main(void){
+	HAL_StatusTypeDef ret = HAL_OK;
+	uint8_t *package;
+	while(1){
+		for(int i=0;i<5;i++){
+			package = &position_cmd[i][0];
+			ret = RS485_transmit(package, 8, 100);
+			HAL_Delay(20);
+			package = &move_cmd[0][0];
+			ret = RS485_transmit(package, 8, 100);
+			HAL_Delay(20);
+			ret = RS485_transmit(package+8, 8, 100);
+			HAL_Delay(10000);
+		}
+		if(tim7_EN){
+
+			tim7_EN = false;
+		}
+	}
+
+}
+
+static HAL_StatusTypeDef RS485_receive(uint8_t *pData, uint16_t size, uint32_t timeout){
+  HAL_StatusTypeDef ret = HAL_OK;
+  HAL_GPIO_WritePin(RS485_CTRL_GPIO_Port, RS485_CTRL_Pin, GPIO_PIN_RESET);
+  ret = HAL_UART_Receive(&huart1, pData, size, timeout);
+  return ret;
+}
+
+static HAL_StatusTypeDef RS485_transmit(uint8_t *pData, uint16_t size, uint32_t timeout){
+	HAL_StatusTypeDef ret = HAL_OK;
+	HAL_GPIO_WritePin(RS485_CTRL_GPIO_Port, RS485_CTRL_Pin, GPIO_PIN_SET);
+	ret = HAL_UART_Transmit(&huart1, pData, size, timeout);
+	HAL_GPIO_WritePin(RS485_CTRL_GPIO_Port, RS485_CTRL_Pin, GPIO_PIN_RESET);
+	return ret;
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
+{
+	if(htim == &htim7){
+		tim7_EN = true;
+	}
+}
